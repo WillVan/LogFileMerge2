@@ -15,6 +15,8 @@ namespace FileLoadingTest
 {
     internal class Program
     {
+        private static readonly int ConsumerCount = Environment.ProcessorCount;
+
         static void Main(string[] args)
         {
             // Check if Server GC is enabled
@@ -26,54 +28,37 @@ namespace FileLoadingTest
             {
                 string[] files = Directory.GetFiles(folderPath);
                 Stopwatch totalStopwatch = new Stopwatch();
-                Stopwatch readLineStopwatch = new Stopwatch();
-                Stopwatch parseLogEntryStopwatch = new Stopwatch();
                 totalStopwatch.Start();
+
                 var logEntries = new ConcurrentBag<(DateTime Timestamp, string Message)>();
-                int fileCount = 0;
+                var fileContents = new BlockingCollection<string>(boundedCapacity: 100);
 
-                foreach (string file in files)
+                // Start producer task
+                Task producerTask = Task.Run(() => Producer(files, fileContents));
+
+                // Start consumer tasks
+                Task[] consumerTasks = new Task[ConsumerCount];
+                for (int i = 0; i < ConsumerCount; i++)
                 {
-                    try
-                    {
-                        // 64k buffer for file stream 
-                        using (StreamReader reader = new StreamReader(file, Encoding.UTF8, true, 65536)) // 64k buffer
-                        {
-                            string line;
-                            while (true)
-                            {
-                                readLineStopwatch.Start();
-                                line = reader.ReadLine();
-                                readLineStopwatch.Stop();
-
-                                if (line == null)
-                                    break;
-
-                                // Parse the line
-                                parseLogEntryStopwatch.Start();
-                                var parsedEntry = ParseLogEntry(line);
-                                parseLogEntryStopwatch.Stop();
-
-                                if (parsedEntry.HasValue)
-                                {
-                                    logEntries.Add(parsedEntry.Value);
-                                }
-                            }
-                        }
-                        fileCount++;
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Could not read file {file}: {ex.Message}");
-                    }
+                    consumerTasks[i] = Task.Run(() => Consumer(fileContents, logEntries));
                 }
+
+                // Wait for producer to finish
+                producerTask.Wait();
+
+                // Signal consumers to complete
+                fileContents.CompleteAdding();
+
+                // Wait for all consumers to finish
+                Task.WaitAll(consumerTasks);
+
+                // Sort LogEntries
+                logEntries.AsParallel().ToArray().OrderBy(l => l.Timestamp)
 
                 totalStopwatch.Stop();
                 Console.WriteLine($"Total time: {totalStopwatch.ElapsedMilliseconds} ms");
-                Console.WriteLine($"Total files: {fileCount}");
+                Console.WriteLine($"Total files: {files.Length}");
                 Console.WriteLine($"Total log entries: {logEntries.Count}");
-                Console.WriteLine($"Total ReadLine time: {readLineStopwatch.ElapsedMilliseconds} ms");
-                Console.WriteLine($"Total ParseLogEntry time: {parseLogEntryStopwatch.ElapsedMilliseconds} ms");
             }
             else
             {
@@ -82,6 +67,41 @@ namespace FileLoadingTest
 
             Console.WriteLine("Press any key to exit.");
             Console.ReadKey();
+        }
+
+        private static void Producer(string[] files, BlockingCollection<string> fileContents)
+        {
+            foreach (string file in files)
+            {
+                try
+                {
+                    string content = File.ReadAllText(file, Encoding.UTF8);
+                    fileContents.Add(content);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Could not read file {file}: {ex.Message}");
+                }
+            }
+        }
+
+        private static void Consumer(BlockingCollection<string> fileContents, ConcurrentBag<(DateTime Timestamp, string Message)> logEntries)
+        {
+            foreach (var content in fileContents.GetConsumingEnumerable())
+            {
+                using (StringReader reader = new StringReader(content))
+                {
+                    string line;
+                    while ((line = reader.ReadLine()) != null)
+                    {
+                        var parsedEntry = ParseLogEntry(line);
+                        if (parsedEntry.HasValue)
+                        {
+                            logEntries.Add(parsedEntry.Value);
+                        }
+                    }
+                }
+            }
         }
 
         private static (DateTime Timestamp, string Message)? ParseLogEntry(string line)
