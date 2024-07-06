@@ -52,13 +52,38 @@ namespace FileLoadingTest
                 // Wait for all consumers to finish
                 Task.WaitAll(consumerTasks);
 
-                // Sort LogEntries
-                logEntries.AsParallel().ToArray().OrderBy(l => l.Timestamp)
+                // Sort log entries
+                Stopwatch sortStopwatch = new Stopwatch();
+                sortStopwatch.Start();
 
+                var sortedLogEntries = logEntries.AsParallel().OrderBy(entry => entry.Timestamp).ToArray();
+
+                sortStopwatch.Stop();
+
+                // Write sorted log entries to file
+                Stopwatch writeStopwatch = new Stopwatch();
+                writeStopwatch.Start();
+
+                string outputPath = @"c:\output\output.log";
+                Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
+                using (StreamWriter writer = new StreamWriter(outputPath, false, Encoding.UTF8, 8 * 1024 * 1024)) // 8MB buffer size
+                {
+                    foreach (var entry in sortedLogEntries)
+                    {
+                        writer.WriteLine(entry.Message);
+                    }
+                }
+
+                writeStopwatch.Stop();
                 totalStopwatch.Stop();
+
+                // Print timings and other information
+                Console.WriteLine($"Sorting time: {sortStopwatch.ElapsedMilliseconds} ms");
+                Console.WriteLine($"Writing time: {writeStopwatch.ElapsedMilliseconds} ms");
                 Console.WriteLine($"Total time: {totalStopwatch.ElapsedMilliseconds} ms");
                 Console.WriteLine($"Total files: {files.Length}");
                 Console.WriteLine($"Total log entries: {logEntries.Count}");
+                Console.WriteLine($"Sorted log entries written to {outputPath}");
             }
             else
             {
@@ -111,14 +136,13 @@ namespace FileLoadingTest
             if (separatorIndex > 0)
             {
                 ReadOnlySpan<char> timestampSpan = lineSpan.Slice(0, separatorIndex);
-                ReadOnlySpan<char> messageSpan = lineSpan.Slice(separatorIndex + 3);
 
                 // Convert ReadOnlySpan<char> to string
                 string timestampString = timestampSpan.ToString();
 
-                if (DateTime.TryParseExact(timestampString, "yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime timestamp))
+                if (DateTime.TryParse(timestampString, out DateTime timestamp))
                 {
-                    return (timestamp, messageSpan.ToString());
+                    return (timestamp, line); // Include the complete line in the message
                 }
             }
 
