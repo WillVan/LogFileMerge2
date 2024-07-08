@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Buffers;
 using System.Buffers.Text;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -31,7 +32,7 @@ namespace FileLoadingTest
                 totalStopwatch.Start();
 
                 var logEntries = new ConcurrentBag<(DateTime Timestamp, string Message)>();
-                var fileContents = new BlockingCollection<string>(boundedCapacity: 100);
+                var fileContents = new BlockingCollection<(char[] Buffer, int Length)>(boundedCapacity: 100);
 
                 // Start producer task
                 Task producerTask = Task.Run(() => Producer(files, fileContents));
@@ -94,14 +95,19 @@ namespace FileLoadingTest
             Console.ReadKey();
         }
 
-        private static void Producer(string[] files, BlockingCollection<string> fileContents)
+        private static void Producer(string[] files, BlockingCollection<(char[] Buffer, int Length)> fileContents)
         {
             foreach (string file in files)
             {
                 try
                 {
-                    string content = File.ReadAllText(file, Encoding.UTF8);
-                    fileContents.Add(content);
+                    char[] buffer = ArrayPool<char>.Shared.Rent((int)new FileInfo(file).Length);
+                    int charsRead;
+                    using (StreamReader reader = new StreamReader(file, Encoding.UTF8))
+                    {
+                        charsRead = reader.Read(buffer, 0, buffer.Length);
+                    }
+                    fileContents.Add((buffer, charsRead));
                 }
                 catch (Exception ex)
                 {
@@ -110,21 +116,29 @@ namespace FileLoadingTest
             }
         }
 
-        private static void Consumer(BlockingCollection<string> fileContents, ConcurrentBag<(DateTime Timestamp, string Message)> logEntries)
+        private static void Consumer(BlockingCollection<(char[] Buffer, int Length)> fileContents, ConcurrentBag<(DateTime Timestamp, string Message)> logEntries)
         {
-            foreach (var content in fileContents.GetConsumingEnumerable())
+            foreach (var item in fileContents.GetConsumingEnumerable())
             {
-                using (StringReader reader = new StringReader(content))
+                var (buffer, length) = item;
+                try
                 {
-                    string line;
-                    while ((line = reader.ReadLine()) != null)
+                    using (StringReader reader = new StringReader(new string(buffer, 0, length)))
                     {
-                        var parsedEntry = ParseLogEntry(line);
-                        if (parsedEntry.HasValue)
+                        string line;
+                        while ((line = reader.ReadLine()) != null)
                         {
-                            logEntries.Add(parsedEntry.Value);
+                            var parsedEntry = ParseLogEntry(line);
+                            if (parsedEntry.HasValue)
+                            {
+                                logEntries.Add(parsedEntry.Value);
+                            }
                         }
                     }
+                }
+                finally
+                {
+                    ArrayPool<char>.Shared.Return(buffer);
                 }
             }
         }
