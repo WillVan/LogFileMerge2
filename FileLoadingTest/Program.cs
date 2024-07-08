@@ -22,7 +22,7 @@ namespace FileLoadingTest
             // Check if Server GC is enabled
             Console.WriteLine($"Server GC is {(GCSettings.IsServerGC ? "enabled" : "disabled")}.");
 
-            string folderPath = @"c:\LogFileMerge";
+            string folderPath = @"C:\largetest\";
 
             if (Directory.Exists(folderPath))
             {
