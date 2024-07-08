@@ -132,15 +132,12 @@ namespace FileLoadingTest
         private static (DateTime Timestamp, string Message)? ParseLogEntry(string line)
         {
             ReadOnlySpan<char> lineSpan = line.AsSpan();
-            int separatorIndex = lineSpan.IndexOf(" - ".AsSpan());
+            int separatorIndex = lineSpan.IndexOf(" - ");
             if (separatorIndex > 0)
             {
                 ReadOnlySpan<char> timestampSpan = lineSpan.Slice(0, separatorIndex);
 
-                // Convert ReadOnlySpan<char> to string
-                string timestampString = timestampSpan.ToString();
-
-                if (DateTime.TryParse(timestampString, out DateTime timestamp))
+                if (DateTime.TryParse(timestampSpan, out DateTime timestamp))
                 {
                     return (timestamp, line); // Include the complete line in the message
                 }
