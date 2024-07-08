@@ -123,17 +123,28 @@ namespace FileLoadingTest
                 var (buffer, length) = item;
                 try
                 {
-                    using (StringReader reader = new StringReader(new string(buffer, 0, length)))
+                    ReadOnlySpan<char> span = buffer.AsSpan(0, length);
+                    int start = 0;
+
+                    while (start < span.Length)
                     {
-                        string line;
-                        while ((line = reader.ReadLine()) != null)
+                        int end = span.Slice(start).IndexOf('\n');
+                        if (end == -1)
                         {
-                            var parsedEntry = ParseLogEntry(line);
+                            end = span.Length - start;
+                        }
+
+                        ReadOnlySpan<char> lineSpan = span.Slice(start, end).Trim();
+                        if (!lineSpan.IsEmpty)
+                        {
+                            var parsedEntry = ParseLogEntry(lineSpan);
                             if (parsedEntry.HasValue)
                             {
                                 logEntries.Add(parsedEntry.Value);
                             }
                         }
+
+                        start += end + 1;
                     }
                 }
                 finally
@@ -143,9 +154,8 @@ namespace FileLoadingTest
             }
         }
 
-        private static (DateTime Timestamp, string Message)? ParseLogEntry(string line)
+        private static (DateTime Timestamp, string Message)? ParseLogEntry(ReadOnlySpan<char> lineSpan)
         {
-            ReadOnlySpan<char> lineSpan = line.AsSpan();
             int separatorIndex = lineSpan.IndexOf(" - ");
             if (separatorIndex > 0)
             {
@@ -153,7 +163,7 @@ namespace FileLoadingTest
 
                 if (DateTime.TryParse(timestampSpan, out DateTime timestamp))
                 {
-                    return (timestamp, line); // Include the complete line in the message
+                    return (timestamp, lineSpan.ToString()); // Include the complete line in the message
                 }
             }
 

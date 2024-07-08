@@ -2,7 +2,7 @@
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <OutputType>Exe</OutputType>
-    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <AssemblyTitle>FileLoadingTest</AssemblyTitle>
     <Product>FileLoadingTest</Product>
