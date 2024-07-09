@@ -125,6 +125,9 @@ namespace FileLoadingTest
                 {
                     ReadOnlySpan<char> span = buffer.AsSpan(0, length);
                     int start = 0;
+                    DateTime? logEntryTimestamp = null;
+                    int logEntryStart = 0;
+                    int logEntryEnd = 0;
 
                     while (start < span.Length)
                     {
@@ -137,14 +140,38 @@ namespace FileLoadingTest
                         ReadOnlySpan<char> lineSpan = span.Slice(start, end).Trim();
                         if (!lineSpan.IsEmpty)
                         {
-                            var parsedEntry = ParseLogEntry(lineSpan);
-                            if (parsedEntry.HasValue)
+                            if (logEntryTimestamp.HasValue && !lineSpan.StartsWith("at "))
                             {
-                                logEntries.Add(parsedEntry.Value);
+                                // Add the previous log entry to the collection
+                                var logEntrySpan = span.Slice(logEntryStart, logEntryEnd - logEntryStart);
+                                logEntries.Add((logEntryTimestamp.Value, logEntrySpan.ToString()));
+                                logEntryTimestamp = null;
+                            }
+
+                            if (!logEntryTimestamp.HasValue)
+                            {
+                                var parsedEntry = ParseLogEntry(lineSpan);
+                                if (parsedEntry.HasValue)
+                                {
+                                    logEntryTimestamp = parsedEntry.Value.Timestamp;
+                                    logEntryStart = start;
+                                    logEntryEnd = start + end + 1;
+                                }
+                            }
+                            else
+                            {
+                                logEntryEnd = start + end + 1;
                             }
                         }
 
                         start += end + 1;
+                    }
+
+                    // Add the last log entry if it exists
+                    if (logEntryTimestamp.HasValue)
+                    {
+                        var logEntrySpan = span.Slice(logEntryStart, logEntryEnd - logEntryStart);
+                        logEntries.Add((logEntryTimestamp.Value, logEntrySpan.ToString()));
                     }
                 }
                 finally
