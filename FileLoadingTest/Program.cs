@@ -140,12 +140,19 @@ namespace FileLoadingTest
                         ReadOnlySpan<char> lineSpan = span.Slice(start, end).Trim();
                         if (!lineSpan.IsEmpty)
                         {
-                            if (logEntryTimestamp.HasValue && !lineSpan.StartsWith("at "))
+                            if (logEntryTimestamp.HasValue)
                             {
-                                // Add the previous log entry to the collection
-                                var logEntrySpan = span.Slice(logEntryStart, logEntryEnd - logEntryStart);
-                                logEntries.Add((logEntryTimestamp.Value, logEntrySpan.ToString()));
-                                logEntryTimestamp = null;
+                                if (!lineSpan.StartsWith("at "))
+                                {
+                                    // Add the previous log entry to the collection
+                                    var logEntrySpan = span.Slice(logEntryStart, logEntryEnd - logEntryStart);
+                                    logEntries.Add((logEntryTimestamp.Value, logEntrySpan.ToString()));
+                                    logEntryTimestamp = null;
+                                }
+                                else
+                                {
+                                    logEntryEnd = start + end + 1;
+                                }
                             }
 
                             if (!logEntryTimestamp.HasValue)
@@ -157,10 +164,6 @@ namespace FileLoadingTest
                                     logEntryStart = start;
                                     logEntryEnd = start + end + 1;
                                 }
-                            }
-                            else
-                            {
-                                logEntryEnd = start + end + 1;
                             }
                         }
 
@@ -176,7 +179,7 @@ namespace FileLoadingTest
                 }
                 finally
                 {
-                    ArrayPool<char>.Shared.Return(buffer);
+                    ArrayPool<char>.Shared.Return(buffer, clearArray: true); // Clear the array to avoid holding onto references
                 }
             }
         }
