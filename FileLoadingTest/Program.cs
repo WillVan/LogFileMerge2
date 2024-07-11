@@ -53,12 +53,8 @@ namespace FileLoadingTest
                     Task.WaitAll(consumerTasks);
 
                     var finalResult = MergeSortedLists(consumerResults);
-
-                    Stopwatch writeStopwatch = new Stopwatch();
-                    writeStopwatch.Start();
-
-                    string outputPath = @"c:\output\output.log";
-                    Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
+                    
+                    string outputPath = Path.Combine(folderPath, "output.log");
                     using (StreamWriter writer = new StreamWriter(outputPath, false, Encoding.UTF8, 8 * 1024 * 1024))
                     {
                         foreach (var entry in finalResult)
@@ -67,7 +63,6 @@ namespace FileLoadingTest
                         }
                     }
 
-                    writeStopwatch.Stop();
                     totalStopwatch.Stop();
 
                     Console.WriteLine($"Log files processed: {files.Length}");
