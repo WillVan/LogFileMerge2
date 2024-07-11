@@ -179,7 +179,7 @@ namespace FileLoadingTest
                 }
                 finally
                 {
-                    ArrayPool<char>.Shared.Return(buffer, clearArray: true); // Clear the array to avoid holding onto references
+                    ArrayPool<char>.Shared.Return(buffer); // Clear the array to avoid holding onto references
                 }
             }
         }
