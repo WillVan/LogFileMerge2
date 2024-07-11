@@ -20,79 +20,87 @@ namespace FileLoadingTest
 
         static void Main(string[] args)
         {
-            // Check if Server GC is enabled
-            Console.WriteLine($"Server GC is {(GCSettings.IsServerGC ? "enabled" : "disabled")}.");
-
-            string folderPath = @"C:\largetest\";
-
-            if (Directory.Exists(folderPath))
+            try
             {
-                string[] files = Directory.GetFiles(folderPath);
-                Stopwatch totalStopwatch = new Stopwatch();
-                totalStopwatch.Start();
-
-                var logEntries = new ConcurrentBag<(DateTime Timestamp, string Message)>();
-                var fileContents = new BlockingCollection<(char[] Buffer, int Length)>(boundedCapacity: 100);
-
-                // Start producer task
-                Task producerTask = Task.Run(() => Producer(files, fileContents));
-
-                // Start consumer tasks
-                Task[] consumerTasks = new Task[ConsumerCount];
-                for (int i = 0; i < ConsumerCount; i++)
+                if (args.Length == 0)
                 {
-                    consumerTasks[i] = Task.Run(() => Consumer(fileContents, logEntries));
+                    Console.WriteLine("Usage: FileLoadingTest <folderPath>");
+                    return;
                 }
 
-                // Wait for producer to finish
-                producerTask.Wait();
+                string folderPath = args[0];
 
-                // Signal consumers to complete
-                fileContents.CompleteAdding();
-
-                // Wait for all consumers to finish
-                Task.WaitAll(consumerTasks);
-
-                // Sort log entries
-                Stopwatch sortStopwatch = new Stopwatch();
-                sortStopwatch.Start();
-
-                var sortedLogEntries = logEntries.AsParallel().OrderBy(entry => entry.Timestamp).ToArray();
-
-                sortStopwatch.Stop();
-
-                // Write sorted log entries to file
-                Stopwatch writeStopwatch = new Stopwatch();
-                writeStopwatch.Start();
-
-                string outputPath = @"c:\output\output.log";
-                Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
-                using (StreamWriter writer = new StreamWriter(outputPath, false, Encoding.UTF8, 8 * 1024 * 1024)) // 8MB buffer size
+                if (Directory.Exists(folderPath))
                 {
-                    foreach (var entry in sortedLogEntries)
+                    Console.WriteLine($"Processing log files in folder: {folderPath}");
+                    string[] files = Directory.GetFiles(folderPath);
+                    Stopwatch totalStopwatch = new Stopwatch();
+                    totalStopwatch.Start();
+
+                    var fileContents = new BlockingCollection<(char[] Buffer, int Length)>(boundedCapacity: 100);
+                    var consumerResults = new List<(DateTime Timestamp, string Message)>[ConsumerCount];
+
+                    Task producerTask = Task.Run(() => Producer(files, fileContents));
+                    Task[] consumerTasks = new Task[ConsumerCount];
+                    for (int i = 0; i < ConsumerCount; i++)
                     {
-                        writer.WriteLine(entry.Message);
+                        int consumerIndex = i;
+                        consumerTasks[i] = Task.Run(() => Consumer(fileContents, consumerResults, consumerIndex));
                     }
+
+                    producerTask.Wait();
+                    fileContents.CompleteAdding();
+                    Task.WaitAll(consumerTasks);
+
+                    var finalResult = MergeSortedLists(consumerResults);
+
+                    Stopwatch writeStopwatch = new Stopwatch();
+                    writeStopwatch.Start();
+
+                    string outputPath = @"c:\output\output.log";
+                    Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
+                    using (StreamWriter writer = new StreamWriter(outputPath, false, Encoding.UTF8, 8 * 1024 * 1024))
+                    {
+                        foreach (var entry in finalResult)
+                        {
+                            writer.WriteLine(entry.Message.Trim());
+                        }
+                    }
+
+                    writeStopwatch.Stop();
+                    totalStopwatch.Stop();
+
+                    Console.WriteLine($"Log files processed: {files.Length}");
+                    Console.WriteLine($"Total log entries: {finalResult.Count}");
+                    Console.WriteLine($"Sorted log entries written to: {outputPath}");
+                    Console.WriteLine($"Total processing time: {totalStopwatch.ElapsedMilliseconds} ms");
                 }
-
-                writeStopwatch.Stop();
-                totalStopwatch.Stop();
-
-                // Print timings and other information
-                Console.WriteLine($"Sorting time: {sortStopwatch.ElapsedMilliseconds} ms");
-                Console.WriteLine($"Writing time: {writeStopwatch.ElapsedMilliseconds} ms");
-                Console.WriteLine($"Total time: {totalStopwatch.ElapsedMilliseconds} ms");
-                Console.WriteLine($"Total files: {files.Length}");
-                Console.WriteLine($"Total log entries: {logEntries.Count}");
-                Console.WriteLine($"Sorted log entries written to {outputPath}");
+                else
+                {
+                    Console.WriteLine($"Folder {folderPath} does not exist.");
+                }
             }
-            else
+            catch (DirectoryNotFoundException ex)
             {
-                Console.WriteLine($"Folder {folderPath} does not exist.");
+                Console.WriteLine($"Error: The specified directory was not found. {ex.Message}");
             }
-
-            Console.WriteLine("Press any key to exit.");
-            Console.ReadKey();
+            catch (IOException ex)
+            {
+                Console.WriteLine($"Error: An I/O error occurred. {ex.Message}");
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                Console.WriteLine($"Error: Access to the path is denied. {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"An unexpected error occurred: {ex.Message}");
+            }
+            finally
+            {
+                Console.WriteLine("Press any key to exit.");
+                Console.ReadKey();
+            }
         }
 
         private static void Producer(string[] files, BlockingCollection<(char[] Buffer, int Length)> fileContents)
@@ -116,71 +124,76 @@ namespace FileLoadingTest
             }
         }
 
-        private static void Consumer(BlockingCollection<(char[] Buffer, int Length)> fileContents, ConcurrentBag<(DateTime Timestamp, string Message)> logEntries)
+        private static void Consumer(BlockingCollection<(char[] Buffer, int Length)> fileContents, List<(DateTime Timestamp, string Message)>[] consumerResults, int consumerIndex)
         {
+            var localLogEntries = new List<(DateTime Timestamp, string Message)>(10_000);
+
             foreach (var item in fileContents.GetConsumingEnumerable())
             {
                 var (buffer, length) = item;
                 try
                 {
-                    ReadOnlySpan<char> span = buffer.AsSpan(0, length);
-                    int start = 0;
-                    DateTime? logEntryTimestamp = null;
-                    int logEntryStart = 0;
-                    int logEntryEnd = 0;
-
-                    while (start < span.Length)
-                    {
-                        int end = span.Slice(start).IndexOf('\n');
-                        if (end == -1)
-                        {
-                            end = span.Length - start;
-                        }
-
-                        ReadOnlySpan<char> lineSpan = span.Slice(start, end).Trim();
-                        if (!lineSpan.IsEmpty)
-                        {
-                            if (logEntryTimestamp.HasValue)
-                            {
-                                if (!lineSpan.StartsWith("at "))
-                                {
-                                    // Add the previous log entry to the collection
-                                    var logEntrySpan = span.Slice(logEntryStart, logEntryEnd - logEntryStart);
-                                    logEntries.Add((logEntryTimestamp.Value, logEntrySpan.ToString()));
-                                    logEntryTimestamp = null;
-                                }
-                                else
-                                {
-                                    logEntryEnd = start + end + 1;
-                                }
-                            }
-
-                            if (!logEntryTimestamp.HasValue)
-                            {
-                                var parsedEntry = ParseLogEntry(lineSpan);
-                                if (parsedEntry.HasValue)
-                                {
-                                    logEntryTimestamp = parsedEntry.Value.Timestamp;
-                                    logEntryStart = start;
-                                    logEntryEnd = start + end + 1;
-                                }
-                            }
-                        }
-
-                        start += end + 1;
-                    }
-
-                    // Add the last log entry if it exists
-                    if (logEntryTimestamp.HasValue)
-                    {
-                        var logEntrySpan = span.Slice(logEntryStart, logEntryEnd - logEntryStart);
-                        logEntries.Add((logEntryTimestamp.Value, logEntrySpan.ToString()));
-                    }
+                    ParseBuffer(buffer, length, localLogEntries);
                 }
                 finally
                 {
-                    ArrayPool<char>.Shared.Return(buffer); // Clear the array to avoid holding onto references
+                    ArrayPool<char>.Shared.Return(buffer);
                 }
+            }
+
+            localLogEntries.Sort((x, y) => x.Timestamp.CompareTo(y.Timestamp));
+            consumerResults[consumerIndex] = localLogEntries;
+        }
+
+        private static void ParseBuffer(char[] buffer, int length, List<(DateTime Timestamp, string Message)> logEntries)
+        {
+            ReadOnlySpan<char> span = buffer.AsSpan(0, length);
+            int start = 0;
+            DateTime? logEntryTimestamp = null;
+            int logEntryStart = 0;
+            int logEntryEnd = 0;
+
+            while (start < span.Length)
+            {
+                int end = span.Slice(start).IndexOf('\n');
+                if (end == -1)
+                {
+                    end = span.Length - start;
+                }
+
+                ReadOnlySpan<char> lineSpan = span.Slice(start, end).Trim();
+                if (!lineSpan.IsEmpty)
+                {
+                    var parsedEntry = ParseLogEntry(lineSpan);
+                    if (parsedEntry.HasValue)
+                    {
+                        // If there is a previous log entry, add it to the collection
+                        if (logEntryTimestamp.HasValue)
+                        {
+                            var logEntrySpan = span.Slice(logEntryStart, logEntryEnd - logEntryStart).Trim();
+                            logEntries.Add((logEntryTimestamp.Value, logEntrySpan.ToString()));
+                        }
+
+                        // Start a new log entry
+                        logEntryTimestamp = parsedEntry.Value.Timestamp;
+                        logEntryStart = start;
+                        logEntryEnd = start + end + 1;
+                    }
+                    else if (logEntryTimestamp.HasValue)
+                    {
+                        // If the line is part of the previous log entry, extend the end position
+                        logEntryEnd = start + end + 1;
+                    }
+                }
+
+                start += end + 1;
+            }
+
+            // Add the last log entry if it exists
+            if (logEntryTimestamp.HasValue)
+            {
+                var logEntrySpan = span.Slice(logEntryStart, logEntryEnd - logEntryStart).Trim();
+                logEntries.Add((logEntryTimestamp.Value, logEntrySpan.ToString()));
             }
         }
 
@@ -193,11 +206,48 @@ namespace FileLoadingTest
 
                 if (DateTime.TryParse(timestampSpan, out DateTime timestamp))
                 {
-                    return (timestamp, lineSpan.ToString()); // Include the complete line in the message
+                    return (timestamp, lineSpan.ToString());
                 }
             }
 
             return null;
+        }
+
+        private static List<(DateTime Timestamp, string Message)> MergeSortedLists(List<(DateTime Timestamp, string Message)>[] sortedLists)
+        {
+            int totalSize = sortedLists.Sum(list => list.Count);
+            var finalResult = new List<(DateTime Timestamp, string Message)>(totalSize);
+            var enumerators = new IEnumerator<(DateTime Timestamp, string Message)>[sortedLists.Length];
+
+            for (int i = 0; i < sortedLists.Length; i++)
+            {
+                enumerators[i] = sortedLists[i].GetEnumerator();
+            }
+
+            var priorityQueue = new PriorityQueue<(DateTime Timestamp, string Message, int ListIndex), DateTime>();
+
+            for (int i = 0; i < enumerators.Length; i++)
+            {
+                if (enumerators[i].MoveNext())
+                {
+                    var current = enumerators[i].Current;
+                    priorityQueue.Enqueue((current.Timestamp, current.Message, i), current.Timestamp);
+                }
+            }
+
+            while (priorityQueue.Count > 0)
+            {
+                var (timestamp, message, listIndex) = priorityQueue.Dequeue();
+                finalResult.Add((timestamp, message));
+
+                if (enumerators[listIndex].MoveNext())
+                {
+                    var current = enumerators[listIndex].Current;
+                    priorityQueue.Enqueue((current.Timestamp, current.Message, listIndex), current.Timestamp);
+                }
+            }
+
+            return finalResult;
         }
     }
 }
