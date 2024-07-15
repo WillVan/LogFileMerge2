@@ -24,7 +24,7 @@ namespace FileLoadingTest
             {
                 if (args.Length == 0)
                 {
-                    Console.WriteLine("Usage: FileLoadingTest <folderPath>");
+                    Console.WriteLine("Usage: LogFileMerge2 <folderPath>");
                     return;
                 }
 
@@ -38,7 +38,7 @@ namespace FileLoadingTest
                     totalStopwatch.Start();
 
                     var fileContents = new BlockingCollection<(char[] Buffer, int Length)>(boundedCapacity: 100);
-                    var consumerResults = new List<(DateTime Timestamp, string Message)>[ConsumerCount];
+                    var consumerResults = new ChunkedList<(DateTime Timestamp, string Message)>[ConsumerCount];
 
                     Task producerTask = Task.Run(() => Producer(files, fileContents));
                     Task[] consumerTasks = new Task[ConsumerCount];
@@ -52,8 +52,8 @@ namespace FileLoadingTest
                     fileContents.CompleteAdding();
                     Task.WaitAll(consumerTasks);
 
-                    var finalResult = MergeSortedLists(consumerResults);
-                    
+                    var finalResult = MergeSortedChunks(consumerResults);
+
                     string outputPath = Path.Combine(folderPath, "output.log");
                     using (StreamWriter writer = new StreamWriter(outputPath, false, Encoding.UTF8, 8 * 1024 * 1024))
                     {
@@ -119,9 +119,9 @@ namespace FileLoadingTest
             }
         }
 
-        private static void Consumer(BlockingCollection<(char[] Buffer, int Length)> fileContents, List<(DateTime Timestamp, string Message)>[] consumerResults, int consumerIndex)
+        private static void Consumer(BlockingCollection<(char[] Buffer, int Length)> fileContents, ChunkedList<(DateTime Timestamp, string Message)>[] consumerResults, int consumerIndex)
         {
-            var localLogEntries = new List<(DateTime Timestamp, string Message)>(10_000);
+            var localLogEntries = new ChunkedList<(DateTime Timestamp, string Message)>(10000);
 
             foreach (var item in fileContents.GetConsumingEnumerable())
             {
@@ -136,11 +136,11 @@ namespace FileLoadingTest
                 }
             }
 
-            localLogEntries.Sort((x, y) => x.Timestamp.CompareTo(y.Timestamp));
+            localLogEntries.SortAllChunks(Comparer<(DateTime Timestamp, string Message)>.Create((x, y) => x.Timestamp.CompareTo(y.Timestamp)));
             consumerResults[consumerIndex] = localLogEntries;
         }
 
-        private static void ParseBuffer(char[] buffer, int length, List<(DateTime Timestamp, string Message)> logEntries)
+        private static void ParseBuffer(char[] buffer, int length, ChunkedList<(DateTime Timestamp, string Message)> logEntries)
         {
             ReadOnlySpan<char> span = buffer.AsSpan(0, length);
             int start = 0;
@@ -208,37 +208,32 @@ namespace FileLoadingTest
             return null;
         }
 
-        private static List<(DateTime Timestamp, string Message)> MergeSortedLists(List<(DateTime Timestamp, string Message)>[] sortedLists)
+        private static List<(DateTime Timestamp, string Message)> MergeSortedChunks(ChunkedList<(DateTime Timestamp, string Message)>[] sortedChunkLists)
         {
-            int totalSize = sortedLists.Sum(list => list.Count);
+            // Calculate the total size of all chunks combined
+            int totalSize = sortedChunkLists.Sum(chunkedList => chunkedList.GetAllItems().Count());
             var finalResult = new List<(DateTime Timestamp, string Message)>(totalSize);
-            var enumerators = new IEnumerator<(DateTime Timestamp, string Message)>[sortedLists.Length];
 
-            for (int i = 0; i < sortedLists.Length; i++)
+            var priorityQueue = new PriorityQueue<(DateTime Timestamp, string Message, int ListIndex, IEnumerator<(DateTime Timestamp, string Message)>), DateTime>();
+
+            // Initialize the priority queue with the first element of each chunk
+            for (int i = 0; i < sortedChunkLists.Length; i++)
             {
-                enumerators[i] = sortedLists[i].GetEnumerator();
-            }
-
-            var priorityQueue = new PriorityQueue<(DateTime Timestamp, string Message, int ListIndex), DateTime>();
-
-            for (int i = 0; i < enumerators.Length; i++)
-            {
-                if (enumerators[i].MoveNext())
+                var enumerator = sortedChunkLists[i].GetAllItems().GetEnumerator();
+                if (enumerator.MoveNext())
                 {
-                    var current = enumerators[i].Current;
-                    priorityQueue.Enqueue((current.Timestamp, current.Message, i), current.Timestamp);
+                    priorityQueue.Enqueue((enumerator.Current.Timestamp, enumerator.Current.Message, i, enumerator), enumerator.Current.Timestamp);
                 }
             }
 
             while (priorityQueue.Count > 0)
             {
-                var (timestamp, message, listIndex) = priorityQueue.Dequeue();
+                var (timestamp, message, listIndex, enumerator) = priorityQueue.Dequeue();
                 finalResult.Add((timestamp, message));
 
-                if (enumerators[listIndex].MoveNext())
+                if (enumerator.MoveNext())
                 {
-                    var current = enumerators[listIndex].Current;
-                    priorityQueue.Enqueue((current.Timestamp, current.Message, listIndex), current.Timestamp);
+                    priorityQueue.Enqueue((enumerator.Current.Timestamp, enumerator.Current.Message, listIndex, enumerator), enumerator.Current.Timestamp);
                 }
             }
 

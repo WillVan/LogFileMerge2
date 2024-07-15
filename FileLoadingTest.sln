@@ -2,7 +2,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.10.35013.160
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Logfilemerge2", "FileLoadingTest\Logfilemerge2.csproj", "{039A0543-DD84-48A2-A757-7D93D2C64D55}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "LogFileMerge2", "FileLoadingTest\LogFileMerge2.csproj", "{039A0543-DD84-48A2-A757-7D93D2C64D55}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
