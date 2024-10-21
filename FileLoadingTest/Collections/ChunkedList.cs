@@ -41,4 +41,9 @@ public class ChunkedList<T>
             chunk.Sort(comparer);
         }
     }
+
+    public IEnumerable<List<T>> GetChunks()
+    {
+        return chunks;
+    }
 }

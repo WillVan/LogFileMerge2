@@ -214,26 +214,31 @@ namespace FileLoadingTest
             int totalSize = sortedChunkLists.Sum(chunkedList => chunkedList.GetAllItems().Count());
             var finalResult = new List<(DateTime Timestamp, string Message)>(totalSize);
 
-            var priorityQueue = new PriorityQueue<(DateTime Timestamp, string Message, int ListIndex, IEnumerator<(DateTime Timestamp, string Message)>), DateTime>();
+            var priorityQueue = new PriorityQueue<(DateTime Timestamp, string Message, IEnumerator<(DateTime Timestamp, string Message)>), DateTime>(
+                Comparer<DateTime>.Create((x, y) => x.CompareTo(y))
+            );
 
-            // Initialize the priority queue with the first element of each chunk
-            for (int i = 0; i < sortedChunkLists.Length; i++)
+            // Initialize the priority queue with the first element of each chunk from all ChunkedLists
+            foreach (var chunkedList in sortedChunkLists)
             {
-                var enumerator = sortedChunkLists[i].GetAllItems().GetEnumerator();
-                if (enumerator.MoveNext())
+                foreach (var chunk in chunkedList.GetChunks())
                 {
-                    priorityQueue.Enqueue((enumerator.Current.Timestamp, enumerator.Current.Message, i, enumerator), enumerator.Current.Timestamp);
+                    var enumerator = chunk.GetEnumerator();
+                    if (enumerator.MoveNext())
+                    {
+                        priorityQueue.Enqueue((enumerator.Current.Timestamp, enumerator.Current.Message, enumerator), enumerator.Current.Timestamp);
+                    }
                 }
             }
 
             while (priorityQueue.Count > 0)
             {
-                var (timestamp, message, listIndex, enumerator) = priorityQueue.Dequeue();
+                var (timestamp, message, enumerator) = priorityQueue.Dequeue();
                 finalResult.Add((timestamp, message));
 
                 if (enumerator.MoveNext())
                 {
-                    priorityQueue.Enqueue((enumerator.Current.Timestamp, enumerator.Current.Message, listIndex, enumerator), enumerator.Current.Timestamp);
+                    priorityQueue.Enqueue((enumerator.Current.Timestamp, enumerator.Current.Message, enumerator), enumerator.Current.Timestamp);
                 }
             }
 
